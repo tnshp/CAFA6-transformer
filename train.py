@@ -120,6 +120,11 @@ def train_go_classifier(
     print("\n[1/7] Preparing data...")
     data = prepare_data(train_term_df, train_seq, top_k=top_k)
 
+    top_terms = pd.DataFrame( data['top_terms'], columns=['terms'])
+    save_terms_path = '/mnt/d/ML/Kaggle/CAFA6/saved/top_terms_256.csv'
+    top_terms.to_csv(save_terms_path, index=False)
+    print(f"Saved top terms to {save_terms_path}")
+
     # NEW: Compute per-class alpha values
     print(f"\n[2/7] Computing per-class alpha using '{alpha_method}' method...")
     class_frequencies = get_class_frequencies_from_dataframe(
@@ -196,7 +201,7 @@ def train_go_classifier(
         optimizer, mode='min', factor=0.5, patience=2
     )
 
-    # Training loop
+    # Training loop - 
     print(f"\n[6/7] Training for {num_epochs} epochs...")
     print("-"*80)
 
@@ -242,6 +247,7 @@ def train_go_classifier(
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
+                'tokenizer_state_dict': tokenizer.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_f1': best_f1,
                 'mlb': data['mlb'],
@@ -317,25 +323,24 @@ def predict_go_terms(model, sequence, tokenizer, mlb, device, threshold=0.5, max
 
 if __name__ == "__main__":
 
-    
-    BASE_PATH = "./cafa-6-protein-function-prediction/"
+    import json
+    configs = json.load(open('configs.json'))
+
+    data = configs['data']
+    BASE_PATH = data.get('base_path', "./cafa-6-protein-function-prediction/")
 
     go_graph = obonet.read_obo(os.path.join(BASE_PATH, 'Train/go-basic.obo'))
     print(f"Gene Ontology graph loaded with {len(go_graph)} nodes and {len(go_graph.edges)} edges.")
-    # --- Load Training Terms ---
     train_terms_df = pd.read_csv(os.path.join(BASE_PATH, 'Train/train_terms.tsv'), sep='\\t')
     print(f"Training terms loaded. Shape: {train_terms_df.shape}")
 
-    # --- Load Training Sequences ---
-    # We will parse the FASTA file later when we need the sequences.
     train_fasta_path = os.path.join(BASE_PATH, 'Train/train_sequences.fasta')
     print(f"Training sequences path set: {train_fasta_path}")
 
-    # --- Load Test Sequences ---
+
     test_fasta_path = os.path.join(BASE_PATH, 'Test/testsuperset.fasta')
     print(f"Test sequences path set: {test_fasta_path}")
 
-    # --- Load Information Accretion (Weights) ---
     ia_df = pd.read_csv(os.path.join(BASE_PATH, 'IA.tsv'), sep='\\t', header=None, names=['term_id', 'ia_score'])
     ia_map = dict(zip(ia_df['term_id'], ia_df['ia_score']))
     print(f"Information Accretion scores loaded for {len(ia_map)} terms.")
@@ -351,16 +356,10 @@ if __name__ == "__main__":
     train_seq = read_fasta(train_fasta_path)
     
     # Train the model
-    model, tokenizer, history, data = train_go_classifier(
-        train_term_df=train_terms_df,
-        train_seq=train_seq,
-        model_name='facebook/esm2_t6_8M_UR50D',
-        top_k=32,
-        alpha_method='effective_number',  # Choose: 'inverse', 'inverse_normalized', 'effective_number', 
-        batch_size=16,
-        num_epochs=10,
-        learning_rate=2e-5
-    )
+    #read json configs file
+    
+    model_configs = configs['model_configs']
+    model, tokenizer, history, data, _ = train_go_classifier(**model_configs)
 
     # Make predictions
     test_sequence = "MKTIIALSYIFCLVFA..."

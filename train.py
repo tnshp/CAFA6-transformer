@@ -47,7 +47,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
 
     return total_loss / len(dataloader)
 
-def validate(model, dataloader, criterion, device):
+def validate(model, dataloader, criterion,  device, ia_scores=None):
     """Validate the model - FIXED VERSION."""
     model.eval()
     total_loss = 0
@@ -74,15 +74,25 @@ def validate(model, dataloader, criterion, device):
     all_labels = np.vstack(all_labels).astype(bool)
     
     hamming_acc = (all_predictions == all_labels).all(axis=1).mean()
+        
+    tp = np.logical_and(all_predictions, all_labels).sum(axis=0)
+    fp = np.logical_and(all_predictions, np.logical_not(all_labels)).sum(axis=0)
+    fn = np.logical_and(np.logical_not(all_predictions), all_labels).sum(axis=0)
     
-    # FIXED: Use logical operators
-    tp = np.logical_and(all_predictions, all_labels).sum()
-    fp = np.logical_and(all_predictions, np.logical_not(all_labels)).sum()
-    fn = np.logical_and(np.logical_not(all_predictions), all_labels).sum()
-    
-    precision = tp / (tp + fp + 1e-10)
-    recall = tp / (tp + fn + 1e-10)
+    precision = (tp / (tp + fp + 1e-10))
+    recall = (tp / (tp + fn + 1e-10))
+
+    if ia_scores is not None:
+        precision = (precision * ia_scores).mean()
+        recall = (recall * ia_scores).mean()
+    else:
+        precision = precision.mean()
+        recall = recall.mean()
     f1 = 2 * precision * recall / (precision + recall + 1e-10)
+    
+    # Log metrics
+    
+    # print(f"\nValidation Hamming Acc: {hamming_acc:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
     
     return {
         'loss': total_loss / len(dataloader),
@@ -101,8 +111,11 @@ print("✓ Fixed validate() function loaded!")
 def train_go_classifier(
     train_term_df,
     train_seq,
+    ia_df,
     model_name='facebook/esm2_t6_8M_UR50D',
+    classifier_depth=1,
     top_k=100,
+    test_size=0.2,
     batch_size=16,
     num_epochs=10,
     learning_rate=2e-5,
@@ -118,12 +131,7 @@ def train_go_classifier(
 
     # Prepare data
     print("\n[1/7] Preparing data...")
-    data = prepare_data(train_term_df, train_seq, top_k=top_k)
-
-    top_terms = pd.DataFrame( data['top_terms'], columns=['terms'])
-    save_terms_path = '/mnt/d/ML/Kaggle/CAFA6/saved/top_terms_256.csv'
-    top_terms.to_csv(save_terms_path, index=False)
-    print(f"Saved top terms to {save_terms_path}")
+    data = prepare_data(train_term_df, train_seq, ia_df, top_k=top_k, test_size=test_size)
 
     # NEW: Compute per-class alpha values
     print(f"\n[2/7] Computing per-class alpha using '{alpha_method}' method...")
@@ -181,7 +189,8 @@ def train_go_classifier(
     print(f"\n[5/7] Initializing model on {device}...")
     model = ProteinGOClassifier(
         model_name=model_name,
-        num_classes=data['num_classes']
+        num_classes=data['num_classes'],
+        classifier_depth=classifier_depth,
     )
     model = model.to(device)
 
@@ -201,7 +210,7 @@ def train_go_classifier(
         optimizer, mode='min', factor=0.5, patience=2
     )
 
-    # Training loop - 
+    # Training loop
     print(f"\n[6/7] Training for {num_epochs} epochs...")
     print("-"*80)
 
@@ -222,7 +231,7 @@ def train_go_classifier(
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
 
         # Validate
-        val_metrics = validate(model, val_loader, criterion, device)
+        val_metrics = validate(model, val_loader, criterion, device, ia_scores=data['ia_scores'])
 
         # Update scheduler
         scheduler.step(val_metrics['loss'])
@@ -247,7 +256,6 @@ def train_go_classifier(
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
-                'tokenizer_state_dict': tokenizer.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_f1': best_f1,
                 'mlb': data['mlb'],
@@ -323,24 +331,25 @@ def predict_go_terms(model, sequence, tokenizer, mlb, device, threshold=0.5, max
 
 if __name__ == "__main__":
 
-    import json
-    configs = json.load(open('configs.json'))
-
-    data = configs['data']
-    BASE_PATH = data.get('base_path', "./cafa-6-protein-function-prediction/")
+    
+    BASE_PATH = "./cafa-6-protein-function-prediction/"
 
     go_graph = obonet.read_obo(os.path.join(BASE_PATH, 'Train/go-basic.obo'))
     print(f"Gene Ontology graph loaded with {len(go_graph)} nodes and {len(go_graph.edges)} edges.")
+    # --- Load Training Terms ---
     train_terms_df = pd.read_csv(os.path.join(BASE_PATH, 'Train/train_terms.tsv'), sep='\\t')
     print(f"Training terms loaded. Shape: {train_terms_df.shape}")
 
+    # --- Load Training Sequences ---
+    # We will parse the FASTA file later when we need the sequences.
     train_fasta_path = os.path.join(BASE_PATH, 'Train/train_sequences.fasta')
     print(f"Training sequences path set: {train_fasta_path}")
 
-
+    # --- Load Test Sequences ---
     test_fasta_path = os.path.join(BASE_PATH, 'Test/testsuperset.fasta')
     print(f"Test sequences path set: {test_fasta_path}")
 
+    # --- Load Information Accretion (Weights) ---
     ia_df = pd.read_csv(os.path.join(BASE_PATH, 'IA.tsv'), sep='\\t', header=None, names=['term_id', 'ia_score'])
     ia_map = dict(zip(ia_df['term_id'], ia_df['ia_score']))
     print(f"Information Accretion scores loaded for {len(ia_map)} terms.")
@@ -356,16 +365,25 @@ if __name__ == "__main__":
     train_seq = read_fasta(train_fasta_path)
     
     # Train the model
-    #read json configs file
-    
-    model_configs = configs['model_configs']
-    model, tokenizer, history, data, _ = train_go_classifier(**model_configs)
+    model, tokenizer, history, data = train_go_classifier(
+        train_term_df=train_terms_df,
+        train_seq=train_seq,
+        ia_df=ia_df,
+        model_name='facebook/esm2_t6_8M_UR50D',
+        classifier_depth=2,
+        top_k=32,
+        test_size=0.6,
+        alpha_method='effective_number',  # Choose: 'inverse', 'inverse_normalized', 'effective_number', 
+        batch_size=16,
+        num_epochs=10,
+        learning_rate=2e-5
+    )
 
     # Make predictions
     test_sequence = "MKTIIALSYIFCLVFA..."
     predictions = predict_go_terms(
         model=model,
-        sequence=test_sequence,
+        sequence=test_sequence, 
         tokenizer=tokenizer,
         mlb=data['mlb'],
         device='cuda'

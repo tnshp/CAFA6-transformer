@@ -30,7 +30,7 @@ class ProteinGOClassifier(nn.Module):
         dropout: Dropout rate
         hidden_dim: Hidden dimension for MLP
     """
-    def __init__(self, model_name, num_classes, dropout=0.3, hidden_dim=512):
+    def __init__(self, model_name, num_classes, classifier_depth=1, dropout=0.3, hidden_dim=512):
         super(ProteinGOClassifier, self).__init__()
 
         # Load pretrained transformer
@@ -43,12 +43,17 @@ class ProteinGOClassifier(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # MLP classifier head
-        self.classifier = nn.Sequential(
-            nn.Linear(self.hidden_size, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
+        self.classifier_depth = classifier_depth
+
+        self.classifier = nn.Sequential(nn.Linear(self.hidden_size, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+        
+        for _ in range(classifier_depth - 1):
+            self.classifier.append(nn.ReLU())
+            self.classifier.append(nn.Dropout(dropout))
+            self.classifier.append(nn.Linear(hidden_dim, hidden_dim))
+        
+        self.classifier.append(nn.Linear(hidden_dim, num_classes))
+       
 
     def forward(self, input_ids, attention_mask):
         """

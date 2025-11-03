@@ -2,12 +2,12 @@
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple
-from tqdm import tqdm
+import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
 
 
-def prepare_data(train_term_df, train_seq, top_k=100, test_size=0.2, random_state=42):
+def prepare_data(train_term_df, train_seq, ia_df, top_k=100, test_size=0.2, random_state=42):
     """
     Prepare data for training.
 
@@ -60,7 +60,11 @@ def prepare_data(train_term_df, train_seq, top_k=100, test_size=0.2, random_stat
         sequences, labels_binary, 
         test_size=test_size, 
         random_state=random_state
-    )
+    )   
+
+    ia_df['term_id'] = pd.Categorical(ia_df['term_id'], categories=top_terms, ordered=True)
+    ia_df.sort_values('term_id')[0:len(top_terms)]
+    ia_scores = ia_df.sort_values('term_id')[0:len(top_terms)]['ia_score'].values
 
     print(f"Train samples: {len(train_sequences)}")
     print(f"Validation samples: {len(val_sequences)}")
@@ -72,6 +76,7 @@ def prepare_data(train_term_df, train_seq, top_k=100, test_size=0.2, random_stat
         'val_labels': val_labels,
         'mlb': mlb,
         'top_terms': top_terms,
+        'ia_scores': ia_scores,
         'num_classes': len(top_terms)
     }
 

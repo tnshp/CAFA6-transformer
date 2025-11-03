@@ -98,7 +98,7 @@ def compute_per_class_alpha_from_frequencies(class_frequencies, method='inverse'
         class_frequencies: Array of shape (num_classes,) with counts for each class
         method: How to compute alpha
             - 'inverse': α_c = 1 / f_c (inverse frequency)
-            - 'inverse_normalized': α_c = (1/f_c) / sum(1/f_c) (normalized)
+            - ' ': α_c = (1/f_c) / sum(1/f_c) (normalized)
             - 'effective_number': α_c = (1-β^f_c) / (1-β) (effective number of samples)
             - 'sqrt_inverse': α_c = 1 / sqrt(f_c) (square root of inverse)
             - 'balanced': α_c = N / (K * f_c) (balanced weighting)

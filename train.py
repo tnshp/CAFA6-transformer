@@ -114,6 +114,8 @@ def train_go_classifier(
     ia_df,
     model_name='facebook/esm2_t6_8M_UR50D',
     classifier_depth=1,
+    dropout=0.3,
+    hidden_dim=512,
     top_k=100,
     test_size=0.2,
     batch_size=16,
@@ -123,7 +125,8 @@ def train_go_classifier(
     device='cuda' if torch.cuda.is_available() else 'cpu',
     alpha_method='effective_number',  # NEW PARAMETER
     focal_gamma=2.0,
-    beta=0.999  # For effective_number method
+    beta=0.999,  # For effective_number method
+    save_dir = None
 ):
     print("="*80)
     print("GO TERM PREDICTION WITH PER-CLASS FOCAL LOSS")
@@ -191,6 +194,8 @@ def train_go_classifier(
         model_name=model_name,
         num_classes=data['num_classes'],
         classifier_depth=classifier_depth,
+        dropout=dropout,
+        hidden_dim=hidden_dim
     )
     model = model.to(device)
 
@@ -251,8 +256,16 @@ def train_go_classifier(
         print(f"Val Recall: {val_metrics['recall']:.4f}")
 
         # Save best model
+        from datetime import datetime
         if val_metrics['f1'] > best_f1:
             best_f1 = val_metrics['f1']
+            # save in date-stamped directory
+            # create date-stamped directory if not exists
+            if save_dir is None:
+                save_dir = "./checkpoints"
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            os.makedirs(os.path.join(save_dir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S")), exist_ok=True)
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -262,7 +275,7 @@ def train_go_classifier(
                 'top_terms': data['top_terms'],
                 'per_class_alpha': per_class_alpha,
                 'alpha_method': alpha_method
-            }, 'best_go_model_per_class_focal.pt')
+            }, os.path.join(save_dir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), 'best_go_model_focal.pt'))
             print(f"✓ Saved best model (F1: {best_f1:.4f})")
 
     print("\n[7/7] Training complete!")
@@ -331,8 +344,12 @@ def predict_go_terms(model, sequence, tokenizer, mlb, device, threshold=0.5, max
 
 if __name__ == "__main__":
 
-    
-    BASE_PATH = "./cafa-6-protein-function-prediction/"
+    import json
+    configs = json.load(open('configs.json'))
+
+    # Set paths
+    data = configs.get('data_paths', {})
+    BASE_PATH = data.get('base_path', "./cafa-6-protein-function-prediction/")
 
     go_graph = obonet.read_obo(os.path.join(BASE_PATH, 'Train/go-basic.obo'))
     print(f"Gene Ontology graph loaded with {len(go_graph)} nodes and {len(go_graph.edges)} edges.")
@@ -364,20 +381,15 @@ if __name__ == "__main__":
 
     train_seq = read_fasta(train_fasta_path)
     
+    model_configs = configs.get('model_configs', {})
     # Train the model
     model, tokenizer, history, data = train_go_classifier(
         train_term_df=train_terms_df,
         train_seq=train_seq,
         ia_df=ia_df,
-        model_name='facebook/esm2_t6_8M_UR50D',
-        classifier_depth=2,
-        top_k=32,
-        test_size=0.6,
-        alpha_method='effective_number',  # Choose: 'inverse', 'inverse_normalized', 'effective_number', 
-        batch_size=16,
-        num_epochs=10,
-        learning_rate=2e-5
-    )
+        **model_configs
+    )   
+
 
     # Make predictions
     test_sequence = "MKTIIALSYIFCLVFA..."

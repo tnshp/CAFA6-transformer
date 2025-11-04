@@ -269,6 +269,7 @@ def train_go_classifier(
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
+                'history': history,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_f1': best_f1,
                 'mlb': data['mlb'],
@@ -383,7 +384,7 @@ if __name__ == "__main__":
     
     model_configs = configs.get('model_configs', {})
     # Train the model
-    model, tokenizer, history, data = train_go_classifier(
+    model, tokenizer, history, data , alpha = train_go_classifier(
         train_term_df=train_terms_df,
         train_seq=train_seq,
         ia_df=ia_df,

@@ -24,6 +24,7 @@ def train_go_classifier_lightning(
     train_seq,
     ia_df,
     model_name='facebook/esm2_t6_8M_UR50D',
+    test_size=0.2, 
     top_k=100,
     batch_size=16,
     num_epochs=10,
@@ -103,7 +104,7 @@ def train_go_classifier_lightning(
     print(f"Checkpoints directory: {run_checkpoint_dir}")
     # Prepare data
     print("\n[1/6] Preparing data...")
-    data = prepare_data(train_term_df, train_seq, ia_df, top_k=top_k)
+    data = prepare_data(train_term_df, train_seq, ia_df, top_k=top_k, test_size=test_size)
     top_terms = pd.DataFrame(data['top_terms'], columns=['terms'])
     save_terms_path = os.path.join(run_checkpoint_dir, f'top_terms_{top_k}.csv')
     os.makedirs(run_save_dir, exist_ok=True)
@@ -306,7 +307,7 @@ def load_trained_model(checkpoint_path, metadata_path):
     return model, tokenizer, metadata
 if __name__ == "__main__":
     import json
-    configs = json.load(open('configs.json'))
+    configs = json.load(open('configs_pl.json'))
 
     # Set paths
     data = configs.get('data_paths', {})

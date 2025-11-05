@@ -404,4 +404,4 @@ if __name__ == "__main__":
 
     print("Predicted GO terms:")
     for pred in predictions:
-        print(f"{pred['term']}: {pred['score']:.4f}")
+        print(f"{pred['term']}: {pred['score']:.4f}")   

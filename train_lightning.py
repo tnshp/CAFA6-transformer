@@ -277,7 +277,7 @@ def train_go_classifier_lightning(
     torch.save(metadata, metadata_path)
     print(f"Metadata saved to: {metadata_path}")
     
-    return model, tokenizer, trainer, data
+    return model, tokenizer, trainer, data, run_checkpoint_dir
 
 
 def load_trained_model(checkpoint_path, metadata_path):
@@ -346,13 +346,19 @@ if __name__ == "__main__":
     # Pass train_term_df and train_seq along with other configs
     model_configs = configs.get('model_configs', {})
 
-    model, tokenizer, history, data, _ = train_go_classifier_lightning(
+
+    
+
+    model, tokenizer, history, data , run_checkpoint_dir = train_go_classifier_lightning(
         train_term_df=train_terms_df,
         train_seq=train_seq,
         ia_df=ia_df,
         **model_configs
     )
-    
+
+    with open(os.path.join(run_checkpoint_dir, 'configs.json'), 'w') as json_file:
+        json.dump(configs, json_file, indent=4)
+
     # Make predictions on example
     test_sequence = list(train_seq.values())[0]  # Use first training sequence as example
     predictions = model.predict_go_terms(

@@ -2,14 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.model_selection import train_test_split
-from collections import Counter
-from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -30,29 +23,31 @@ class ProteinGOClassifier(nn.Module):
         dropout: Dropout rate
         hidden_dim: Hidden dimension for MLP
     """
-    def __init__(self, model_name, num_classes, classifier_depth=1, dropout=0.3, hidden_dim=512):
+    def __init__(self, model_name, num_classes, embeddings='CLS',  classifier_depth=1, dropout=0.3, hidden_dim=512):
         super(ProteinGOClassifier, self).__init__()
 
         # Load pretrained transformer
         self.transformer = AutoModel.from_pretrained(model_name)
 
-        # Get hidden size from transformer config
+
         self.hidden_size = self.transformer.config.hidden_size
+        self.embeddings = embeddings
 
-        # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
-
+        
         # MLP classifier head
-        self.classifier_depth = classifier_depth
-
-        self.classifier = nn.Sequential(nn.Linear(self.hidden_size, hidden_dim), nn.ReLU(), nn.Dropout(dropout))
+        layers = []
+        layers.append(nn.Linear(self.hidden_size, hidden_dim))
+        layers.append(nn.ReLU())
+        layers.append(nn.Dropout(dropout))
         
         for _ in range(classifier_depth - 1):
-            self.classifier.append(nn.ReLU())
-            self.classifier.append(nn.Dropout(dropout))
-            self.classifier.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
         
-        self.classifier.append(nn.Linear(hidden_dim, num_classes))
+        layers.append(nn.Linear(hidden_dim, num_classes))
+        self.classifier = nn.Sequential(*layers)
        
 
     def forward(self, input_ids, attention_mask):
@@ -71,9 +66,20 @@ class ProteinGOClassifier(nn.Module):
             input_ids=input_ids,
             attention_mask=attention_mask
         )
+        if self.embeddings == 'CLS':
+            # Use [CLS] token representation (first token)
+            pooled_output = outputs.last_hidden_state[:, 0, :]
 
-        # Use [CLS] token representation (first token)
-        pooled_output = outputs.last_hidden_state[:, 0, :]
+        elif self.embeddings == 'mean':
+            embeddings = outputs.last_hidden_state
+            # Mask padding tokens
+            mask = attention_mask.unsqueeze(-1).expand(embeddings.size()).float()
+            masked_embeddings = embeddings * mask
+
+            # Calculate mean
+            sum_embeddings = torch.sum(masked_embeddings, dim=1)
+            sum_mask = torch.clamp(mask.sum(dim=1), min=1e-9)
+            pooled_output = sum_embeddings / sum_mask
 
         # Apply dropout
         pooled_output = self.dropout(pooled_output)

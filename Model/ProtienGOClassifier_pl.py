@@ -3,6 +3,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from transformers import AutoModel
 from Utils.FocalLoss import PerClassFocalLoss
+from Model.ProtienGOClassifer import ProteinGOClassifier
 import numpy as np
 
 class ProteinGOClassifierLightning(pl.LightningModule):
@@ -32,6 +33,8 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         per_class_alpha=None,
         ia_scores=None,
         focal_gamma=2.0,
+        embeddings='CLS',
+        freeze_transformer=False
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -42,31 +45,28 @@ class ProteinGOClassifierLightning(pl.LightningModule):
             ia_scores = np.array(ia_scores)
         self.ia_scores = ia_scores
         # Load pretrained transformer
-        self.transformer = AutoModel.from_pretrained(model_name)
-        
-        # Get hidden size from transformer config
-        self.hidden_size = self.transformer.config.hidden_size
-        
-        # Dropout for regularization
-        self.dropout = nn.Dropout(dropout)
-        
-        # MLP classifier head
-        layers = []
-        layers.append(nn.Linear(self.hidden_size, hidden_dim))
-        layers.append(nn.ReLU())
-        layers.append(nn.Dropout(dropout))
-        
-        for _ in range(classifier_depth - 1):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(dropout))
-        
-        layers.append(nn.Linear(hidden_dim, num_classes))
-        self.classifier = nn.Sequential(*layers)
-        
+        self.model = ProteinGOClassifier(
+            model_name=model_name,
+            num_classes=num_classes,    
+            classifier_depth=classifier_depth,
+            dropout=dropout,
+            hidden_dim=hidden_dim,
+            embeddings=embeddings
+        )
+        # Optionally freeze transformer layers
+        if freeze_transformer:
+            for param in self.model.transformer.parameters():
+                param.requires_grad = False
+                
+        # --- Add this verification step ---
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
+        print(f"\n--- Model Parameter Summary ---")
+        print(f"Total parameters: {total_params}")
+        print(f"Trainable parameters: {trainable_params}")
+        print(f"Percentage trainable: {100 * trainable_params / total_params:.2f}%")
+        print(f"-------------------------------\n")  
         # Loss function
-        
-        
         self.criterion = PerClassFocalLoss(
             alpha=per_class_alpha,
             gamma=focal_gamma
@@ -76,31 +76,11 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         self.validation_step_outputs = []
         
     def forward(self, input_ids, attention_mask):
-        """
-        Forward pass.
-        
-        Args:
-            input_ids: (batch_size, seq_len)
-            attention_mask: (batch_size, seq_len)
-            
-        Returns:
-            logits: (batch_size, num_classes)
-        """
-        # Get transformer outputs
-        outputs = self.transformer(
+        #Get outputs
+        logits = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask
         )
-        
-        # Use [CLS] token representation (first token)
-        pooled_output = outputs.last_hidden_state[:, 0, :]
-        
-        # Apply dropout
-        pooled_output = self.dropout(pooled_output)
-        
-        # Get logits from classifier
-        logits = self.classifier(pooled_output)
-        
         return logits
     
     def training_step(self, batch, batch_idx):

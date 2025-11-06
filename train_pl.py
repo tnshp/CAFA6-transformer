@@ -24,6 +24,7 @@ def train_go_classifier_lightning(
     train_seq,
     ia_df,
     model_name='facebook/esm2_t6_8M_UR50D',
+    embeddings='CLS', #CLS, mean or max
     test_size=0.2, 
     top_k=100,
     batch_size=16,
@@ -47,7 +48,10 @@ def train_go_classifier_lightning(
     hidden_dim=512,
     save_top_k=3,
     patience=5,
+    freeze_transformer=False
 ):
+    
+    #replace all function argument with model_configs and training_configs values
     """
     Train GO classifier using PyTorch Lightning.
     
@@ -83,6 +87,7 @@ def train_go_classifier_lightning(
     print("="*80)
     print("GO TERM PREDICTION WITH PYTORCH LIGHTNING")
     print("="*80)
+    
     
     if run_name is None:
         from datetime import datetime
@@ -180,13 +185,15 @@ def train_go_classifier_lightning(
     model = ProteinGOClassifierLightning(
         model_name=model_name,
         num_classes=data['num_classes'],
+        embeddings=embeddings,
         classifier_depth=classifier_depth,
         dropout=dropout,
         hidden_dim=hidden_dim,
         learning_rate=learning_rate,
         per_class_alpha=per_class_alpha,
         ia_scores=data['ia_scores'],
-        focal_gamma=focal_gamma
+        focal_gamma=focal_gamma,
+        freeze_transformer=freeze_transformer
     )
     
     print(f"\nModel configuration:")
@@ -198,6 +205,10 @@ def train_go_classifier_lightning(
     print(f"  - Learning rate: {learning_rate}")
     print(f"  - Focal gamma: {focal_gamma}")
     print(f"  - Alpha method: {alpha_method}")
+    print(f"  - Embedding dimension: {model.model.hidden_size}")
+
+    if freeze_transformer:
+        print("  - Transformer layers are frozen.")
     
     # Setup callbacks
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -222,7 +233,7 @@ def train_go_classifier_lightning(
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     
     # Setup logger
-    logger = TensorBoardLogger(save_dir, name='go_classifier', version=run_name)
+    logger = TensorBoardLogger(save_dir, version=run_name)
     
     # Initialize trainer
     print(f"\n[6/6] Initializing PyTorch Lightning Trainer...")
@@ -307,7 +318,14 @@ def load_trained_model(checkpoint_path, metadata_path):
     return model, tokenizer, metadata
 if __name__ == "__main__":
     import json
-    configs = json.load(open('configs_pl.json'))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train Protein GO Classifier with PyTorch Lightning")
+    parser.add_argument('--config', type=str, default='configs_pl.json', help='Path to config JSON file')
+    parser.add_argument('--run_name', type=str, default=None, help='Optional run name for logging')
+
+    args = parser.parse_args()
+    configs = json.load(open(args.config))
 
     # Set paths
     data = configs.get('data_paths', {})
@@ -346,14 +364,17 @@ if __name__ == "__main__":
     # Pass train_term_df and train_seq along with other configs
     model_configs = configs.get('model_configs', {})
 
-
+    training_configs = configs.get('training_configs', {})
     
+    #combine the two configs into one dictionary
+    combined_configs = {**model_configs, **training_configs}
 
     model, tokenizer, history, data , run_checkpoint_dir = train_go_classifier_lightning(
         train_term_df=train_terms_df,
         train_seq=train_seq,
         ia_df=ia_df,
-        **model_configs
+        run_name=args.run_name, 
+        **combined_configs
     )
 
     with open(os.path.join(run_checkpoint_dir, 'configs.json'), 'w') as json_file:

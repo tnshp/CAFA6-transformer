@@ -13,7 +13,7 @@ class PerClassFocalLoss(nn.Module):
     have vastly different sample counts (e.g., 600 vs 33,300).
 
     Mathematical formulation:
-        FL(p_t) = -α_c * (1 - p_t)^γ * log(p_t)
+        FL(p_t) = -α_c * (1 - p_t)^γ * log(p_t) -α_c * (p_t)^γ * log(1- p_t) 
 
     where α_c is class-specific (different for each of the K classes).
 
@@ -46,7 +46,7 @@ class PerClassFocalLoss(nn.Module):
             Focal loss value
         """
         # Get probabilities
-        p = torch.sigmoid(inputs)
+        p = inputs
 
         # Calculate BCE loss component (without reduction)
         bce_loss = F.binary_cross_entropy_with_logits(

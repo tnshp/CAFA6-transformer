@@ -19,7 +19,13 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         learning_rate: Learning rate for optimizer
         per_class_alpha: Per-class alpha values for focal loss
         focal_gamma: Gamma parameter for focal loss
-        alpha_method: Method used to compute alpha (for logging)
+        embeddings: Pooling method ('CLS' or 'mean')
+        freeze_transformer: Whether to freeze transformer parameters
+        use_qlora: Whether to use QLoRA for efficient fine-tuning
+        lora_r: LoRA rank
+        lora_alpha: LoRA alpha parameter
+        lora_dropout: LoRA dropout rate
+        lora_target_modules: Target modules for LoRA
     """
     
     def __init__(
@@ -34,38 +40,53 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         ia_scores=None,
         focal_gamma=2.0,
         embeddings='CLS',
-        freeze_transformer=False
+        freeze_transformer=False,
+        use_qlora=False,
+        lora_r=16,
+        lora_alpha=32,
+        lora_dropout=0.1,
+        lora_target_modules=None
     ):
         super().__init__()
         self.save_hyperparameters()
-        
         self.learning_rate = learning_rate
-        #check if ia_scores is np array
+        self.use_qlora = use_qlora
+        
+        # Check if ia_scores is np array
         if ia_scores is not None and not isinstance(ia_scores, np.ndarray):
             ia_scores = np.array(ia_scores)
         self.ia_scores = ia_scores
-        # Load pretrained transformer
+        
+        # Initialize the model with QLoRA support
         self.model = ProteinGOClassifier(
             model_name=model_name,
-            num_classes=num_classes,    
+            num_classes=num_classes,
             classifier_depth=classifier_depth,
             dropout=dropout,
             hidden_dim=hidden_dim,
-            embeddings=embeddings
+            embeddings=embeddings,
+            use_qlora=use_qlora,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=lora_target_modules
         )
-        # Optionally freeze transformer layers
-        if freeze_transformer:
+        
+        # Freeze transformer if requested (only for non-QLoRA mode)
+        if freeze_transformer and not use_qlora:
+            print("\nFreezing transformer parameters...")
             for param in self.model.transformer.parameters():
                 param.requires_grad = False
-                
-        # --- Add this verification step ---
+        
+        # Print parameter summary
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in self.parameters())
         print(f"\n--- Model Parameter Summary ---")
-        print(f"Total parameters: {total_params}")
-        print(f"Trainable parameters: {trainable_params}")
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
         print(f"Percentage trainable: {100 * trainable_params / total_params:.2f}%")
-        print(f"-------------------------------\n")  
+        print(f"-------------------------------\n")
+        
         # Loss function
         self.criterion = PerClassFocalLoss(
             alpha=per_class_alpha,
@@ -74,9 +95,9 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         
         # Store for validation metrics
         self.validation_step_outputs = []
-        
+    
     def forward(self, input_ids, attention_mask):
-        #Get outputs
+        """Forward pass through the model."""
         logits = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask
@@ -146,13 +167,14 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         
         precision = (tp / (tp + fp + 1e-10))
         recall = (tp / (tp + fn + 1e-10))
-
+        
         if self.ia_scores is not None:
             precision = (precision * self.ia_scores).mean()
             recall = (recall * self.ia_scores).mean()
         else:
             precision = precision.mean()
             recall = recall.mean()
+        
         f1 = 2 * precision * recall / (precision + recall + 1e-10)
         
         # Log metrics
@@ -162,15 +184,24 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         self.log('val_f1', f1, prog_bar=True)
         
         print(f"\nValidation Hamming Acc: {hamming_acc:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+        
         # Clear stored outputs
         self.validation_step_outputs.clear()
     
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.learning_rate
-        )
+        # Use 8-bit AdamW for QLoRA to save memory
+        if self.use_qlora:
+            import bitsandbytes as bnb
+            optimizer = bnb.optim.AdamW8bit(
+                self.parameters(),
+                lr=self.learning_rate
+            )
+        else:
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.learning_rate
+            )
         
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -199,7 +230,7 @@ class ProteinGOClassifierLightning(pl.LightningModule):
             mlb: MultiLabelBinarizer
             threshold: Prediction threshold
             max_length: Max sequence length
-            
+        
         Returns:
             List of predicted GO terms with scores
         """
@@ -231,6 +262,7 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         
         # Sort by score
         sorted_idx = np.argsort(predicted_scores)[::-1]
+        
         results = [
             {'term': predicted_terms[i], 'score': float(predicted_scores[i])}
             for i in sorted_idx

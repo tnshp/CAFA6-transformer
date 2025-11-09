@@ -24,8 +24,8 @@ def train_go_classifier_lightning(
     train_seq,
     ia_df,
     model_name='facebook/esm2_t6_8M_UR50D',
-    embeddings='CLS', #CLS, mean or max
-    test_size=0.2, 
+    embeddings='CLS',
+    test_size=0.2,
     top_k=100,
     batch_size=16,
     num_epochs=10,
@@ -48,9 +48,14 @@ def train_go_classifier_lightning(
     hidden_dim=512,
     save_top_k=3,
     patience=5,
-    freeze_transformer=False
+    freeze_transformer=False,
+    use_qlora=False,  # Add this
+    lora_r=16,  # Add this
+    lora_alpha=32,  # Add this
+    lora_dropout=0.1,  # Add this
+    lora_target_modules=None  # Add this
 ):
-    
+
     #replace all function argument with model_configs and training_configs values
     """
     Train GO classifier using PyTorch Lightning.
@@ -180,8 +185,8 @@ def train_go_classifier_lightning(
     )
     
     # Initialize Lightning model
+    # Initialize Lightning model
     print(f"\n[5/6] Initializing Lightning model...")
-
     model = ProteinGOClassifierLightning(
         model_name=model_name,
         num_classes=data['num_classes'],
@@ -193,8 +198,14 @@ def train_go_classifier_lightning(
         per_class_alpha=per_class_alpha,
         ia_scores=data['ia_scores'],
         focal_gamma=focal_gamma,
-        freeze_transformer=freeze_transformer
+        freeze_transformer=freeze_transformer,
+        use_qlora=use_qlora,  # Add this
+        lora_r=lora_r,  # Add this
+        lora_alpha=lora_alpha,  # Add this
+        lora_dropout=lora_dropout,  # Add this
+        lora_target_modules=lora_target_modules  # Add this
     )
+
     
     print(f"\nModel configuration:")
     print(f"  - Model name: {model_name}")

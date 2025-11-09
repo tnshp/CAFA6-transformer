@@ -1,0 +1,10 @@
+
+torch
+obonet
+scikit-learn
+pytorch-lightning
+transformers
+peft 
+bitsandbytes 
+accelerate
+

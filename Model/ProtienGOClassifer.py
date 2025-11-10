@@ -60,7 +60,7 @@ class ProteinGOClassifier(nn.Module):
             self.transformer = AutoModel.from_pretrained(
                 model_name,
                 load_in_4bit=True,  # Use simple flag instead of config
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True
             )

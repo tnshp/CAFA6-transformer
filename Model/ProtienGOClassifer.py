@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel, BitsAndBytesConfig
+from Model.Transformer import Transformer 
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
 import warnings
 
@@ -60,7 +61,7 @@ class ProteinGOClassifier(nn.Module):
             self.transformer = AutoModel.from_pretrained(
                 model_name,
                 load_in_4bit=True,  # Use simple flag instead of config
-                torch_dtype=torch.bfloat16,
+                torch_dtype=torch.baddbmmfloat16,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True
             )
@@ -95,19 +96,15 @@ class ProteinGOClassifier(nn.Module):
         self.hidden_size = self.transformer.config.hidden_size
         self.dropout = nn.Dropout(dropout)
         
-        # MLP classifier head
-        layers = []
-        layers.append(nn.Linear(self.hidden_size, hidden_dim))
-        layers.append(nn.ReLU())
-        layers.append(nn.Dropout(dropout))
-        
-        for _ in range(classifier_depth - 1):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(dropout))
-        
-        layers.append(nn.Linear(hidden_dim, num_classes))
-        self.classifier = nn.Sequential(*layers)
+        # Transformer classifier head
+        self.classifier = Transformer(
+            target_size=num_classes,
+            d_model=self.hidden_size,
+            enc_layers=2,
+            d_ff=1024,
+            max_seq_length=512,
+            dropout=0.1
+        )
     
     def forward(self, input_ids, attention_mask):
         """
@@ -126,23 +123,14 @@ class ProteinGOClassifier(nn.Module):
             attention_mask=attention_mask
         )
         
-        if self.embeddings == 'CLS':
-            # Use [CLS] token representation (first token)
-            pooled_output = outputs.last_hidden_state[:, 0, :]
-        elif self.embeddings == 'mean':
-            embeddings = outputs.last_hidden_state
-            # Mask padding tokens
-            mask = attention_mask.unsqueeze(-1).expand(embeddings.size()).float()
-            masked_embeddings = embeddings * mask
-            # Calculate mean
-            sum_embeddings = torch.sum(masked_embeddings, dim=1)
-            sum_mask = torch.clamp(mask.sum(dim=1), min=1e-9)
-            pooled_output = sum_embeddings / sum_mask
+        # Get full sequence output (batch_size, seq_len, hidden_size)
+        sequence_output = outputs.last_hidden_state
         
         # Apply dropout
-        pooled_output = self.dropout(pooled_output)
+        sequence_output = self.dropout(sequence_output)
         
         # Get logits from classifier
-        logits = self.classifier(pooled_output)
-        
+        # Classifier expects 3D input (batch_size, seq_len, d_model)
+        logits = self.classifier(sequence_output)
+
         return logits

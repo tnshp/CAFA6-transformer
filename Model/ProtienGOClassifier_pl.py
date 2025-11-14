@@ -48,7 +48,12 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         lora_target_modules=None
     ):
         super().__init__()
-        self.save_hyperparameters()
+        
+        # Save hyperparameters excluding numpy arrays and non-serializable objects
+        self.save_hyperparameters(
+            ignore=['per_class_alpha', 'ia_scores', 'lora_target_modules']
+        )
+        
         self.learning_rate = learning_rate
         self.use_qlora = use_qlora
         self.unfreeze_transformer_epoch = unfreeze_transformer_epoch
@@ -106,6 +111,17 @@ class ProteinGOClassifierLightning(pl.LightningModule):
 
         # Store for validation metrics
         self.validation_step_outputs = []
+        
+        # Flag to track if classifier has been moved to device
+        self._classifier_device_set = False
+
+    def on_train_start(self):
+        """Called at the start of training, after model is moved to device."""
+        if not self._classifier_device_set:
+            device = next(self.model.parameters()).device
+            self.model.classifier = self.model.classifier.to(device)
+            self._classifier_device_set = True
+            print(f"\nClassifier moved to device: {device}")
 
     def on_train_epoch_start(self):
         """Called at the start of each training epoch."""
@@ -184,33 +200,43 @@ class ProteinGOClassifierLightning(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         """Compute metrics at end of validation epoch."""
-        # Gather all predictions and labels
+        if not self.validation_step_outputs:
+            return
+        
+        # Gather all predictions and labels (keep as torch tensors)
         all_predictions = torch.cat([x['predictions'] for x in self.validation_step_outputs])
         all_labels = torch.cat([x['labels'] for x in self.validation_step_outputs])
 
-        # Convert to numpy and boolean
-        all_predictions = all_predictions.numpy().astype(bool)
-        all_labels = all_labels.numpy().astype(bool)
+        # Convert to boolean (using torch operations)
+        all_predictions_bool = all_predictions > 0.5
+        all_labels_bool = all_labels > 0.5
 
-        # Calculate metrics
-        hamming_acc = (all_predictions == all_labels).all(axis=1).mean()
-        tp = np.logical_and(all_predictions, all_labels).sum(axis=0)
-        fp = np.logical_and(all_predictions, np.logical_not(all_labels)).sum(axis=0)
-        fn = np.logical_and(np.logical_not(all_predictions), all_labels).sum(axis=0)
+        # Calculate metrics using pure PyTorch
+        # Hamming accuracy: percentage of instances where all labels match
+        hamming_acc = (all_predictions_bool == all_labels_bool).all(dim=1).float().mean()
+        
+        # True positives, false positives, false negatives
+        tp = torch.logical_and(all_predictions_bool, all_labels_bool).sum(dim=0).float()
+        fp = torch.logical_and(all_predictions_bool, ~all_labels_bool).sum(dim=0).float()
+        fn = torch.logical_and(~all_predictions_bool, all_labels_bool).sum(dim=0).float()
 
-        precision = (tp / (tp + fp + 1e-10))
-        recall = (tp / (tp + fn + 1e-10))
+        # Precision and recall
+        precision = tp / (tp + fp + 1e-10)
+        recall = tp / (tp + fn + 1e-10)
 
+        # Apply IA scores weighting if available
         if self.ia_scores is not None:
-            precision = (precision * self.ia_scores).mean()
-            recall = (recall * self.ia_scores).mean()
+            ia_scores_tensor = torch.tensor(self.ia_scores, device=precision.device, dtype=precision.dtype)
+            precision = (precision * ia_scores_tensor).mean()
+            recall = (recall * ia_scores_tensor).mean()
         else:
             precision = precision.mean()
             recall = recall.mean()
 
+        # F1 score
         f1 = 2 * precision * recall / (precision + recall + 1e-10)
 
-        # Log metrics
+        # Log metrics (convert to python floats for logging)
         self.log('val_hamming_acc', hamming_acc, prog_bar=False)
         self.log('val_precision', precision, prog_bar=True)
         self.log('val_recall', recall, prog_bar=True)

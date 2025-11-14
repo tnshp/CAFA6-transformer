@@ -160,6 +160,7 @@ def train_go_classifier_lightning(
         max_length=max_length
     )
 
+
     val_dataset = GOTermDataset(
         data['val_sequences'],
         data['val_labels'],
@@ -336,7 +337,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train Protein GO Classifier with PyTorch Lightning")
-    parser.add_argument('--config', type=str, default='configs_pl.json', help='Path to config JSON file')
+    parser.add_argument('--config', type=str, default='configs_new.json', help='Path to config JSON file')
     parser.add_argument('--run_name', type=str, default=None, help='Optional run name for logging')
     args = parser.parse_args()
 

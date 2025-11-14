@@ -1,5 +1,6 @@
 
 torch
+pandas
 obonet
 scikit-learn
 pytorch-lightning
@@ -7,4 +8,6 @@ transformers
 peft 
 bitsandbytes 
 accelerate
+tensorboard
+tensorboardX
 

@@ -50,6 +50,7 @@ class ProteinGOClassifier(nn.Module):
         
         self.embeddings = embeddings
         self.use_qlora = use_qlora
+        self.classifier_depth = classifier_depth
         
         # Load pretrained transformer with or without QLoRA
         if use_qlora:
@@ -100,7 +101,7 @@ class ProteinGOClassifier(nn.Module):
         self.classifier = Transformer(
             target_size=num_classes,
             d_model=self.hidden_size,
-            enc_layers=2,
+            enc_layers= self.classifier_depth,
             d_ff=1024,
             max_seq_length=512,
             dropout=0.1

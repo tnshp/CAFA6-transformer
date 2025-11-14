@@ -144,7 +144,7 @@ class DecoderLayer(nn.Module):
 class Transformer(nn.Module):
     """Complete Transformer Model"""
     def __init__(self, target_size, d_model=512, num_heads=8, 
-                 enc_layers=6, dec_layers=6, d_ff=2048, max_seq_length=5000, dropout=0.1):
+                 enc_layers=6, dec_layers=6, d_ff=2048, max_seq_length=5000, dropout=0.1, embeddings='CLS'):
         super(Transformer, self).__init__()
         
         self.positional_encoding = PositionalEncoding(d_model, max_seq_length)
@@ -166,6 +166,7 @@ class Transformer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(512, target_size),
         )
+        self.embeddings = embeddings
         self.dropout = nn.Dropout(dropout)
         
     def generate_mask(self, src, tgt):
@@ -190,7 +191,22 @@ class Transformer(nn.Module):
 
 
         # Get CLS token for fc input
-        output = self.fc(enc_output[:, 0, :])
+        if self.embeddings == 'CLS':
+            output = self.fc(enc_output[:, 0, :])
+            
+        elif self.embeddings == 'mean':
+            # Mask padding tokens
+            mask = src.unsqueeze(-1).expand(enc_output.size()).float()
+            masked_embeddings = enc_output * mask
+            # Calculate mean
+            sum_embeddings = torch.sum(masked_embeddings, dim=1)
+            sum_mask = torch.clamp(mask.sum(dim=1), min=1e-9)
+            output = self.fc(sum_embeddings / sum_mask)
+
+        # elif self.embeddings == 'max':
+        #     output = self.fc(enc_output[:, 1:-1, :].max(dim=1)[0])
+        else:
+            raise ValueError(f"Unknown embedding type: {self.embeddings}")
 
         return output
 

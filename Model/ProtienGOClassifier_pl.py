@@ -3,6 +3,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from transformers import AutoModel
 from Utils.FocalLoss import PerClassFocalLoss
+from Utils.AsymetricLoss import AsymmetricLossOptimized, AsymmetricLoss
 from Model.ProtienGOClassifer import ProteinGOClassifier
 import numpy as np
 
@@ -36,9 +37,10 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         dropout=0.3,
         hidden_dim=512,
         learning_rate=2e-5,
-        per_class_alpha=None,
         ia_scores=None,
-        focal_gamma=2.0,
+        gamma_pos=0.0,
+        gamma_neg=4.0,
+        clip = 0.05,
         embeddings='CLS',
         unfreeze_transformer_epoch=-1,
         use_qlora=False,
@@ -104,9 +106,10 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         print(f"-------------------------------\n")
 
         # Loss function
-        self.criterion = PerClassFocalLoss(
-            alpha=per_class_alpha,
-            gamma=focal_gamma
+        self.criterion = AsymmetricLoss(
+            gamma_neg=gamma_neg,
+            gamma_pos=gamma_pos,
+            clip=clip
         )
 
         # Store for validation metrics
@@ -122,6 +125,13 @@ class ProteinGOClassifierLightning(pl.LightningModule):
             self.model.classifier = self.model.classifier.to(device)
             self._classifier_device_set = True
             print(f"\nClassifier moved to device: {device}")
+
+    def on_train_epoch_end(self):
+        """Called at the end of each training epoch."""
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def on_train_epoch_start(self):
         """Called at the start of each training epoch."""
@@ -186,11 +196,11 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         # Get predictions
         predictions = (torch.sigmoid(logits) > 0.5).float()
 
-        # Store outputs for epoch-end metrics
+        # Store outputs for epoch-end metrics (detach to prevent gradient accumulation)
         self.validation_step_outputs.append({
-            'loss': loss,
-            'predictions': predictions.cpu(),
-            'labels': labels.cpu()
+            'loss': loss.detach(),
+            'predictions': predictions.detach().cpu(),
+            'labels': labels.detach().cpu()
         })
 
         # Log loss
@@ -200,12 +210,14 @@ class ProteinGOClassifierLightning(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         """Compute metrics at end of validation epoch."""
+        import gc
+        
         if not self.validation_step_outputs:
             return
         
         # Gather all predictions and labels (keep as torch tensors)
-        all_predictions = torch.cat([x['predictions'] for x in self.validation_step_outputs])
-        all_labels = torch.cat([x['labels'] for x in self.validation_step_outputs])
+        all_predictions = torch.cat([x['predictions'] for x in self.validation_step_outputs], dim=0)
+        all_labels = torch.cat([x['labels'] for x in self.validation_step_outputs], dim=0)
 
         # Convert to boolean (using torch operations)
         all_predictions_bool = all_predictions > 0.5
@@ -244,8 +256,13 @@ class ProteinGOClassifierLightning(pl.LightningModule):
 
         print(f"\nValidation Hamming Acc: {hamming_acc:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
 
-        # Clear stored outputs
+        # Clear stored outputs and free memory
         self.validation_step_outputs.clear()
+        del all_predictions, all_labels, all_predictions_bool, all_labels_bool
+        del tp, fp, fn, precision, recall, f1, hamming_acc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""

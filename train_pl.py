@@ -30,9 +30,9 @@ def train_go_classifier_lightning(
     num_epochs=10,
     learning_rate=2e-5,
     max_length=512,
-    alpha_method='effective_number',
-    focal_gamma=2.0,
-    beta=0.999,
+    gamma_pos=0.0,
+    gamma_neg=4.0,
+    clip=0.05,
     num_workers=2,
     accelerator='auto',
     devices='auto',
@@ -66,7 +66,6 @@ def train_go_classifier_lightning(
         num_epochs: Number of training epochs
         learning_rate: Learning rate
         max_length: Maximum sequence length
-        alpha_method: Method for computing per-class alpha
         focal_gamma: Gamma parameter for focal loss
         beta: Beta parameter for effective_number method
         num_workers: Number of dataloader workers
@@ -123,7 +122,6 @@ def train_go_classifier_lightning(
     print(f"Saved top terms to {save_terms_path}")
 
     # Compute per-class alpha values
-    print(f"\n[2/6] Computing per-class alpha using '{alpha_method}' method...")
     class_frequencies = get_class_frequencies_from_dataframe(
         train_term_df, data['top_terms']
     )
@@ -134,19 +132,7 @@ def train_go_classifier_lightning(
     print(f"  Mean: {class_frequencies.mean():.1f}")
     print(f"  Ratio (max/min): {class_frequencies.max() / class_frequencies.min():.1f}x")
 
-    # Compute per-class alpha
-    per_class_alpha = compute_per_class_alpha_from_frequencies(
-        class_frequencies,
-        method=alpha_method,
-        beta=beta
-    )
-
-    print(f"\nPer-class alpha statistics:")
-    print(f"  Min: {per_class_alpha.min():.4f}")
-    print(f"  Max: {per_class_alpha.max():.4f}")
-    print(f"  Mean: {per_class_alpha.mean():.4f}")
-    print(f"  Ratio (max/min): {(per_class_alpha.max() / per_class_alpha.min()):.1f}x")
-
+    
     # Initialize tokenizer
     print(f"\n[3/6] Loading tokenizer: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -196,9 +182,10 @@ def train_go_classifier_lightning(
         dropout=dropout,
         hidden_dim=hidden_dim,
         learning_rate=learning_rate,
-        per_class_alpha=per_class_alpha,
         ia_scores=data['ia_scores'],
-        focal_gamma=focal_gamma,
+        gamma_pos=gamma_pos,
+        gamma_neg=gamma_neg,
+        clip=clip,
         unfreeze_transformer_epoch=unfreeze_transformer_epoch,
         use_qlora=use_qlora,
         lora_r=lora_r,
@@ -214,8 +201,9 @@ def train_go_classifier_lightning(
     print(f"  - Hidden dim: {hidden_dim}")
     print(f"  - Dropout: {dropout}")
     print(f"  - Learning rate: {learning_rate}")
-    print(f"  - Focal gamma: {focal_gamma}")
-    print(f"  - Alpha method: {alpha_method}")
+    print(f"  - Gamma pos: {gamma_pos}")
+    print(f"  - Gamma neg: {gamma_neg}")
+    print(f"  - Clip: {clip}")
     print(f"  - Embedding dimension: {model.model.hidden_size}")
     print(f"  - Unfreeze transformer epoch: {unfreeze_transformer_epoch}")
 
@@ -280,6 +268,12 @@ def train_go_classifier_lightning(
     print("="*80 + "\n")
 
     trainer.fit(model, train_loader, val_loader)
+    
+    # Clean up and free memory after training
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     print("\n" + "="*80)
     print("TRAINING COMPLETE")
@@ -291,8 +285,6 @@ def train_go_classifier_lightning(
     metadata = {
         'top_terms': data['top_terms'],
         'mlb': data['mlb'],
-        'per_class_alpha': per_class_alpha.tolist(),
-        'alpha_method': alpha_method,
         'model_name': model_name,
         'top_k': top_k,
         'max_length': max_length

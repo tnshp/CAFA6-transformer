@@ -3,7 +3,8 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from transformers import AutoModel
 from Utils.FocalLoss import PerClassFocalLoss
-from Utils.AsymetricLoss import AsymmetricLossOptimized, AsymmetricLoss
+from Dataset.GoDataset import get_class_frequencies_from_dataframe
+from Utils.DistributionLoss import DistributionBalancedLoss, DistributionBalancedLossSimple
 from Model.ProtienGOClassifer import ProteinGOClassifier
 import numpy as np
 
@@ -38,9 +39,12 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         hidden_dim=512,
         learning_rate=2e-5,
         ia_scores=None,
-        gamma_pos=0.0,
-        gamma_neg=4.0,
-        clip = 0.05,
+        class_freq=None,
+        alpha=0.1,
+        beta=10.0,
+        mu=0.2,
+        lambda_neg=2.0,
+        kappa=0.05,
         embeddings='CLS',
         unfreeze_transformer_epoch=-1,
         use_qlora=False,
@@ -106,10 +110,14 @@ class ProteinGOClassifierLightning(pl.LightningModule):
         print(f"-------------------------------\n")
 
         # Loss function
-        self.criterion = AsymmetricLoss(
-            gamma_neg=gamma_neg,
-            gamma_pos=gamma_pos,
-            clip=clip
+        self.criterion = DistributionBalancedLossSimple(
+            class_freq,
+            num_classes=num_classes,
+            alpha=alpha,
+            beta=beta,
+            mu=mu,
+            lambda_neg=lambda_neg,
+            kappa=kappa
         )
 
         # Store for validation metrics

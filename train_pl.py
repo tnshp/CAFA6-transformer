@@ -30,9 +30,11 @@ def train_go_classifier_lightning(
     num_epochs=10,
     learning_rate=2e-5,
     max_length=512,
-    gamma_pos=0.0,
-    gamma_neg=4.0,
-    clip=0.05,
+    alpha=0.1,
+    beta=10.0,
+    mu=0.2,
+    lambda_neg=2.0,
+    kappa=0.05,
     num_workers=2,
     accelerator='auto',
     devices='auto',
@@ -182,10 +184,13 @@ def train_go_classifier_lightning(
         dropout=dropout,
         hidden_dim=hidden_dim,
         learning_rate=learning_rate,
-        ia_scores=data['ia_scores'],
-        gamma_pos=gamma_pos,
-        gamma_neg=gamma_neg,
-        clip=clip,
+        ia_scores=data['ia_scores'], 
+        class_freq=class_frequencies,
+        alpha=alpha,
+        beta=beta, 
+        mu=mu,
+        lambda_neg=lambda_neg,
+        kappa=kappa,
         unfreeze_transformer_epoch=unfreeze_transformer_epoch,
         use_qlora=use_qlora,
         lora_r=lora_r,
@@ -201,9 +206,11 @@ def train_go_classifier_lightning(
     print(f"  - Hidden dim: {hidden_dim}")
     print(f"  - Dropout: {dropout}")
     print(f"  - Learning rate: {learning_rate}")
-    print(f"  - Gamma pos: {gamma_pos}")
-    print(f"  - Gamma neg: {gamma_neg}")
-    print(f"  - Clip: {clip}")
+    print(f"  - Alpha: {alpha}")
+    print(f"  - Beta: {beta}")
+    print(f"  - Mu: {mu}")
+    print(f"  - Lambda neg: {lambda_neg}")
+    print(f"  - Kappa: {kappa}")
     print(f"  - Embedding dimension: {model.model.hidden_size}")
     print(f"  - Unfreeze transformer epoch: {unfreeze_transformer_epoch}")
 
@@ -329,7 +336,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train Protein GO Classifier with PyTorch Lightning")
-    parser.add_argument('--config', type=str, default='configs_new.json', help='Path to config JSON file')
+    parser.add_argument('--config', type=str, default='configs_dbl.json', help='Path to config JSON file')
     parser.add_argument('--run_name', type=str, default=None, help='Optional run name for logging')
     args = parser.parse_args()
 

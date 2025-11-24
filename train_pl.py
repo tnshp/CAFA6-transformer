@@ -198,12 +198,9 @@ def train_go_classifier_lightning(
         hidden_dim=hidden_dim,
         learning_rate=learning_rate,
         ia_scores=data['ia_scores'], 
-        class_freq=class_frequencies,
-        alpha=alpha,
-        beta=beta, 
-        mu=mu,
-        lambda_neg=lambda_neg,
-        kappa=kappa,
+        gamma_pos=gamma_pos,
+        gamma_neg=gamma_neg,
+        clip = clip,
         unfreeze_transformer_epoch=unfreeze_transformer_epoch,
         use_qlora=use_qlora,
         lora_r=lora_r,
@@ -219,11 +216,6 @@ def train_go_classifier_lightning(
     print(f"  - Hidden dim: {hidden_dim}")
     print(f"  - Dropout: {dropout}")
     print(f"  - Learning rate: {learning_rate}")
-    print(f"  - Alpha: {alpha}")
-    print(f"  - Beta: {beta}")
-    print(f"  - Mu: {mu}")
-    print(f"  - Lambda neg: {lambda_neg}")
-    print(f"  - Kappa: {kappa}")
     print(f"  - Embedding dimension: {model.model.hidden_size}")
     print(f"  - Unfreeze transformer epoch: {unfreeze_transformer_epoch}")
 

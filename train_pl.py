@@ -16,7 +16,8 @@ warnings.filterwarnings('ignore')
 from Utils.FocalLoss import compute_per_class_alpha_from_frequencies
 from Dataset.GoDataset import GOTermDataset, get_class_frequencies_from_dataframe
 from Model.ProtienGOClassifier_pl import ProteinGOClassifierLightning
-from Dataset.utils import prepare_data, read_fasta
+from Dataset.utils import prepare_data_range, read_fasta
+from Dataset.Resample import resample
 
 def train_go_classifier_lightning(
     train_term_df,
@@ -33,6 +34,9 @@ def train_go_classifier_lightning(
     gamma_pos=0.0,
     gamma_neg=4.0,
     clip=0.05,
+    sampling_instances=10000,   #sampling
+    sampling_strategy='log_pos',#sampling 
+    sampled_idx_path=None,           #sampling
     num_workers=2,
     accelerator='auto',
     devices='auto',
@@ -114,7 +118,7 @@ def train_go_classifier_lightning(
 
     # Prepare data
     print("\n[1/6] Preparing data...")
-    data = prepare_data(train_term_df, train_seq, ia_df, top_k=top_k, test_size=test_size)
+    data = prepare_data_range(train_term_df, train_seq, ia_df, top_range=[1, top_k + 1])
 
     top_terms = pd.DataFrame(data['top_terms'], columns=['terms'])
     save_terms_path = os.path.join(run_checkpoint_dir, f'top_terms_{top_k}.csv')
@@ -137,21 +141,32 @@ def train_go_classifier_lightning(
     print(f"\n[3/6] Loading tokenizer: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
+    if sampled_idx_path == None:
+        print("No sampled idx path, creating sampled idx...")
+        sampled_idx = resample(data, train_terms_df, strategy=sampling_strategy, I=sampling_instances, t=0.1)
+    else:
+        sampled_idx = np.load(sampled_idx_path)
+
+    idx = np.arange(0, len(data['train_labels']))
+    val_idx = np.setdiff1d(idx, sampled_idx)
+
     # Create datasets
     print("\n[4/6] Creating datasets...")
     train_dataset = GOTermDataset(
         data['train_sequences'],
         data['train_labels'],
         tokenizer,
-        max_length=max_length
+        max_length=max_length,
+        oversample_indices=sampled_idx
     )
 
 
     val_dataset = GOTermDataset(
-        data['val_sequences'],
-        data['val_labels'],
+        data['train_sequences'],
+        data['train_labels'],
         tokenizer,
-        max_length=max_length
+        max_length=max_length,
+        oversample_indices=val_idx
     )
 
     train_loader = DataLoader(
@@ -329,7 +344,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train Protein GO Classifier with PyTorch Lightning")
-    parser.add_argument('--config', type=str, default='configs_new.json', help='Path to config JSON file')
+    parser.add_argument('--config', type=str, default='./configs_new.json', help='Path to config JSON file')
     parser.add_argument('--run_name', type=str, default=None, help='Optional run name for logging')
     args = parser.parse_args()
 

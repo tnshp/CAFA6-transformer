@@ -36,22 +36,25 @@ class GOTermDataset(Dataset):
         labels: Multi-hot encoded labels (num_samples, num_classes)
         tokenizer: Hugging Face tokenizer
         max_length: Maximum sequence length for tokenization
+        oversample_indices: List of indices for oversampling (optional)
     """
-    def __init__(self, sequences, labels, tokenizer, max_length=512):
+    def __init__(self, sequences, labels, tokenizer, max_length=512, oversample_indices=None):
         self.sequences = sequences
         self.labels = labels
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.oversample_indices = oversample_indices if oversample_indices is not None else list(range(len(sequences)))
 
     def __len__(self):
-        return len(self.sequences)
+        return len(self.oversample_indices)
 
     def __getitem__(self, idx):
-        sequence = self.sequences[idx]
-        label = self.labels[idx]
+        # Map idx to the actual sample index using oversample_indices
+        sample_idx = self.oversample_indices[idx]
+        sequence = self.sequences[sample_idx]
+        label = self.labels[sample_idx]
 
         # Tokenize protein sequence
-        # Note: Add spaces between amino acids for better tokenization
         spaced_sequence = ' '.join(list(sequence))
 
         encoding = self.tokenizer(
